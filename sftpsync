@@ -1,0 +1,109 @@
+#!/usr/bin/env expect
+# -*-tcl-*-
+#
+# NAME
+#  sftpsync
+# 
+# SYNOPSIS
+#  sftpsync [CONFIG]
+#
+# DESCRIPTION
+#  This tool synchronizes files from an SFTP server to local disk.
+#  The intended use case for this tool is to synchronize files from
+#  a mobile phone.
+#
+# FILES
+#  ~/.sftpsyncrc
+#  This is a Tcl file for customizing transfer parameters. Below
+#  sample works for a recent Samsung phone with SFTP root mapped
+#  to /storage/emulated/0/ directory.
+#
+#    set cfg(hostname) 10.0.1.2
+#    set cfg(username) sftpsync
+#    set cfg(password) secret
+#    set cfg(port) 2222
+#    set cfg(localdir) [file join $env(HOME) Documents sftpsync]
+#    set cfg(remotedir) {Documents Download Pictures Movies DCIM}
+#    set cfg(timeout) 1200
+#    set cfg(verbose) 1
+#
+# COMPATIBILITY
+#   expect 5.45
+#
+
+proc err {msg} {
+	puts stderr "Error: $msg"
+	exit 1
+}
+
+proc sftpsync_init {inifile} {
+	global env timeout cfg
+	
+	set cfg(localdir) [file join $env(HOME) Documents sftpsync]
+	set cfg(remotedir) {DCIM}
+	set cfg(port) 22
+	set cfg(prompt) "sftp> "
+	set cfg(timeout) 1200
+	set cfg(verbose) 1
+	
+	if {[file exists $inifile]} {
+		source $inifile
+	} else {
+		err "init file $inifile not found"
+	}
+
+	if {0 == [info exists cfg(hostname)] || 0 == [info exists cfg(username)]
+		|| 0 == [info exists cfg(password)]} {
+		err "hostname, username and password are required"
+	}
+	
+	file mkdir $cfg(localdir)
+	set timeout $cfg(timeout)
+	log_user [expr 0 != $cfg(verbose)]
+}
+
+proc sftpsync_get {} {
+	global cfg
+	
+	set t [clock seconds]
+
+	set id [spawn sftp -o Port=$cfg(port) -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no -o CheckHostIP=no $cfg(username)@$cfg(hostname)]
+	expect {word: }
+	if {0 != [catch {send "$cfg(password)\r"}]} {
+		err "connecting to SFTP server failed"
+	}
+	expect $cfg(prompt)
+   
+	foreach src $cfg(remotedir) {
+		set dst [file join $cfg(localdir) [file dirname $src]]
+		puts "Syncing remote $src to local $dst"		
+		send "get -ar $src $dst\r"
+		expect $cfg(prompt)
+	}
+
+	set elapsed [expr [clock seconds] - $t]
+	
+	send "bye\r"
+		
+	puts "Wallclock time: $elapsed"
+}
+
+proc sftpsync_main {} {
+    global argv
+    global env
+	global cfg
+
+	if {0 == [llength $argv]} {
+		set cfg(inifile) [file join $env(HOME) .sftpsyncrc]
+	} else {
+		set cfg(inifile) [lindex $argv 0]
+	}
+	
+	sftpsync_init $cfg(inifile)
+
+	sftpsync_get
+}
+
+sftpsync_main
+
+exit 0
